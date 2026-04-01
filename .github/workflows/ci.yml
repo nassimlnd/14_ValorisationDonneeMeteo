@@ -1,127 +1,228 @@
-name: CI
+name: CI/CD Pipeline
 
 on:
   push:
-    branches: [main]
+    branches: ["main"]
+    tags: ["*"]
   pull_request:
-    branches: [main]
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions: read-all
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_PREFIX: ${{ github.repository_owner }}/${{ github.event.repository.name }}
 
 jobs:
+  # ──────────────────────────────────────────────
+  # Phase 1 — Lint (parallel)
+  # ──────────────────────────────────────────────
   backend-lint:
     name: "Backend - Lint"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
+      - name: "Checkout code"
+        uses: actions/checkout@v4
 
-      - name: Copy .env.example to .env
+      - name: "Copy .env.example to .env"
         run: cp .env.example .env
 
-      - name: Docker up
+      - name: "Start services"
         run: docker compose up backend timescaledb -d
 
-      - name: Install dependencies
+      - name: "Install dependencies"
         run: docker compose exec backend uv sync --extra dev
 
-      - name: Ruff check
+      - name: "Ruff check"
         run: docker compose exec backend uv run ruff check --exclude .venv .
 
-      - name: Ruff format check
+      - name: "Ruff format check"
         run: docker compose exec backend uv run ruff format --check --exclude .venv .
 
+  frontend-lint:
+    name: "Frontend - Lint"
+    runs-on: ubuntu-24.04
+    steps:
+      - name: "Checkout code"
+        uses: actions/checkout@v4
+
+      - name: "Copy .env.example to .env"
+        run: cp .env.example .env
+
+      - name: "Start services"
+        run: docker compose up frontend -d
+
+      - name: "Install dependencies"
+        run: docker compose exec -e NODE_ENV=development frontend npm ci
+
+      - name: "Lint"
+        run: docker compose exec frontend npm run check
+
+  # ──────────────────────────────────────────────
+  # Phase 2 — Tests (needs lint)
+  # ──────────────────────────────────────────────
   backend-test:
     name: "Backend - Tests"
-    runs-on: ubuntu-latest
+    needs: [backend-lint]
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
+      - name: "Checkout code"
+        uses: actions/checkout@v4
 
-      - name: Copy .env.example to .env
+      - name: "Copy .env.example to .env"
         run: cp .env.example .env
 
-      - name: Docker up
+      - name: "Start services"
         run: docker compose up backend timescaledb -d
 
-      - name: Install dependencies
+      - name: "Install dependencies"
         run: docker compose exec backend uv sync --extra dev
 
-      - name: Run migrations
+      - name: "Run migrations"
         run: docker compose exec backend uv run python manage.py migrate
 
-      - name: Run tests
+      - name: "Run tests"
         run: docker compose exec backend uv run pytest
 
+  # ──────────────────────────────────────────────
+  # Phase 2 — Security scans (needs lint, parallel with tests)
+  # ──────────────────────────────────────────────
   backend-security:
     name: "Backend - Security"
-    runs-on: ubuntu-latest
+    needs: [backend-lint]
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
+      - name: "Checkout code"
+        uses: actions/checkout@v4
 
-      - name: Copy .env.example to .env
-        run: cp .env.example .env
-
-      - name: Generate Trivy Vulnerability Report
-        uses: aquasecurity/trivy-action@master
+      - name: "Run Trivy vulnerability scanner"
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           scan-type: "fs"
-          output: trivy-report.json
-          format: json
-          scan-ref: ./backend
+          scan-ref: "./backend"
+          format: "json"
+          output: "trivy-report.json"
           exit-code: 0
 
-      - name: Upload Vulnerability Scan Results
+      - name: "Upload vulnerability report"
         uses: actions/upload-artifact@v4
         with:
           name: trivy-report-backend
           path: trivy-report.json
           retention-days: 7
 
-  frontend-lint:
-    name: "Frontend - Lint"
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Copy .env.example to .env
-        run: cp .env.example .env
-
-      - name: Docker up
-        run: docker compose up frontend -d
-
-      - name: Install dependencies
-        run: docker compose exec -e NODE_ENV=development frontend npm ci
-
-      - name: Lint
-        run: docker compose exec frontend npm run check
-
   frontend-security:
     name: "Frontend - Security"
-    runs-on: ubuntu-latest
+    needs: [frontend-lint]
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
+      - name: "Checkout code"
+        uses: actions/checkout@v4
 
-      - name: Copy .env.example to .env
-        run: cp .env.example .env
-
-      - name: Generate Trivy Vulnerability Report
-        uses: aquasecurity/trivy-action@master
+      - name: "Run Trivy vulnerability scanner"
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           scan-type: "fs"
-          output: trivy-report.json
-          format: json
-          scan-ref: ./frontend
+          scan-ref: "./frontend"
+          format: "json"
+          output: "trivy-report.json"
           exit-code: 0
 
-      - name: Upload Vulnerability Scan Results
+      - name: "Upload vulnerability report"
         uses: actions/upload-artifact@v4
         with:
           name: trivy-report-frontend
           path: trivy-report.json
           retention-days: 7
+
+  # ──────────────────────────────────────────────
+  # Phase 3 — Build & Push (only on tags)
+  # ──────────────────────────────────────────────
+  build-and-push:
+    name: "Build and Push Images"
+    needs: [backend-test, backend-security, frontend-security]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: "Checkout code"
+        uses: actions/checkout@v4
+
+      - name: "Lowercase repo name"
+        run: |
+          echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: "Log in to the container registry"
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Build and push Backend"
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend:latest
+
+      - name: "Build and push Frontend"
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend:latest
+
+  # ──────────────────────────────────────────────
+  # Phase 4 — Scan Docker images (only on tags)
+  # ──────────────────────────────────────────────
+  scan-backend-image:
+    name: "Scan Backend Image"
+    needs: [build-and-push]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: "Run Trivy image scanner"
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          image-ref: "${{ env.REGISTRY }}/${{ github.repository }}-backend:latest"
+          format: "sarif"
+          output: "trivy-backend.sarif"
+          severity: "CRITICAL,HIGH"
+
+      - name: "Upload to code-scanning"
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: "trivy-backend.sarif"
+          category: "trivy-backend"
+
+  scan-frontend-image:
+    name: "Scan Frontend Image"
+    needs: [build-and-push]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: "Run Trivy image scanner"
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          image-ref: "${{ env.REGISTRY }}/${{ github.repository }}-frontend:latest"
+          format: "sarif"
+          output: "trivy-frontend.sarif"
+          severity: "CRITICAL,HIGH"
+
+      - name: "Upload to code-scanning"
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: "trivy-frontend.sarif"
+          category: "trivy-frontend"
