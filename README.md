@@ -1,5 +1,7 @@
 # Valorisation Donnée Météo - Conflict
 
+[![CI/CD Pipeline](https://github.com/nassimlnd/14_ValorisationDonneeMeteo/actions/workflows/ci.yml/badge.svg)](https://github.com/nassimlnd/14_ValorisationDonneeMeteo/actions/workflows/ci.yml)
+
 Projet Data For Good - Saison 14
 
 ## Structure du projet
