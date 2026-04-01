@@ -3,12 +3,13 @@ name: Build and Push Images
 on:
   push:
     tags:
-      - '*' # Push events to every tag not containing /
+      - "*"
   workflow_dispatch:
+
+permissions: read-all
 
 env:
   REGISTRY: ghcr.io
-
 
 jobs:
   build-and-push:
@@ -18,28 +19,28 @@ jobs:
       packages: write
 
     steps:
-      - name: checkout repository
+      - name: "Checkout code"
         uses: actions/checkout@v4
 
-      - name: lowercase repo name
+      - name: "Lowercase repo name"
         run: |
           echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
 
-      - name: log in to the Container REGISTRY
+      - name: "Log in to the container registry"
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Backend
+      - name: "Build and push Backend"
         uses: docker/build-push-action@v5
         with:
           context: ./backend
-          push : true
+          push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend:latest
 
-      - name: Build and Push Frontend
+      - name: "Build and push Frontend"
         uses: docker/build-push-action@v5
         with:
           context: ./frontend
