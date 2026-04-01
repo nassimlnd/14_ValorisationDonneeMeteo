@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}/${{ github.event.repository.name }}
+
+jobs:
+  backend-lint:
+    name: "Backend - Lint"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Copy .env.example to .env
+        run: cp .env.example .env
+
+      - name: Docker up
+        run: docker compose up backend timescaledb -d
+
+      - name: Install dependencies
+        run: docker compose exec backend uv sync --extra dev
+
+      - name: Ruff check
+        run: docker compose exec backend uv run ruff check --exclude .venv .
+
+      - name: Ruff format check
+        run: docker compose exec backend uv run ruff format --check --exclude .venv .
+
+  backend-test:
+    name: "Backend - Tests"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Copy .env.example to .env
+        run: cp .env.example .env
+
+      - name: Docker up
+        run: docker compose up backend timescaledb -d
+
+      - name: Install dependencies
+        run: docker compose exec backend uv sync --extra dev
+
+      - name: Run migrations
+        run: docker compose exec backend uv run python manage.py migrate
+
+      - name: Run tests
+        run: docker compose exec backend uv run pytest
+
+  backend-security:
+    name: "Backend - Security"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Copy .env.example to .env
+        run: cp .env.example .env
+
+      - name: Generate Trivy Vulnerability Report
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          output: trivy-report.json
+          format: json
+          scan-ref: ./backend
+          exit-code: 0
+
+      - name: Upload Vulnerability Scan Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report-backend
+          path: trivy-report.json
+          retention-days: 7
+
+  frontend-lint:
+    name: "Frontend - Lint"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Copy .env.example to .env
+        run: cp .env.example .env
+
+      - name: Docker up
+        run: docker compose up frontend -d
+
+      - name: Install dependencies
+        run: docker compose exec -e NODE_ENV=development frontend npm ci
+
+      - name: Lint
+        run: docker compose exec frontend npm run check
+
+  frontend-security:
+    name: "Frontend - Security"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Copy .env.example to .env
+        run: cp .env.example .env
+
+      - name: Generate Trivy Vulnerability Report
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          output: trivy-report.json
+          format: json
+          scan-ref: ./frontend
+          exit-code: 0
+
+      - name: Upload Vulnerability Scan Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report-frontend
+          path: trivy-report.json
+          retention-days: 7
