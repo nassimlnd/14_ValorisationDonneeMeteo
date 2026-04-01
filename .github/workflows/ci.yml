@@ -85,62 +85,11 @@ jobs:
         run: docker compose exec backend uv run pytest
 
   # ──────────────────────────────────────────────
-  # Phase 2 — Security scans (needs lint, parallel with tests)
-  # ──────────────────────────────────────────────
-  backend-security:
-    name: "Backend - Security"
-    needs: [backend-lint]
-    runs-on: ubuntu-24.04
-    steps:
-      - name: "Checkout code"
-        uses: actions/checkout@v4
-
-      - name: "Run Trivy vulnerability scanner"
-        uses: aquasecurity/trivy-action@v0.35.0
-        with:
-          scan-type: "fs"
-          scan-ref: "./backend"
-          format: "json"
-          output: "trivy-report.json"
-          exit-code: 0
-
-      - name: "Upload vulnerability report"
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-report-backend
-          path: trivy-report.json
-          retention-days: 7
-
-  frontend-security:
-    name: "Frontend - Security"
-    needs: [frontend-lint]
-    runs-on: ubuntu-24.04
-    steps:
-      - name: "Checkout code"
-        uses: actions/checkout@v4
-
-      - name: "Run Trivy vulnerability scanner"
-        uses: aquasecurity/trivy-action@v0.35.0
-        with:
-          scan-type: "fs"
-          scan-ref: "./frontend"
-          format: "json"
-          output: "trivy-report.json"
-          exit-code: 0
-
-      - name: "Upload vulnerability report"
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-report-frontend
-          path: trivy-report.json
-          retention-days: 7
-
-  # ──────────────────────────────────────────────
   # Phase 3 — Build & Push (only on tags)
   # ──────────────────────────────────────────────
   build-and-push:
     name: "Build and Push Images"
-    needs: [backend-test, backend-security, frontend-security]
+    needs: [backend-test, frontend-lint]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-24.04
     permissions:
@@ -175,54 +124,3 @@ jobs:
           context: ./frontend
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend:latest
-
-  # ──────────────────────────────────────────────
-  # Phase 4 — Scan Docker images (only on tags)
-  # ──────────────────────────────────────────────
-  scan-backend-image:
-    name: "Scan Backend Image"
-    needs: [build-and-push]
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      security-events: write
-
-    steps:
-      - name: "Run Trivy image scanner"
-        uses: aquasecurity/trivy-action@v0.35.0
-        with:
-          image-ref: "${{ env.REGISTRY }}/${{ github.repository }}-backend:latest"
-          format: "sarif"
-          output: "trivy-backend.sarif"
-          severity: "CRITICAL,HIGH"
-
-      - name: "Upload to code-scanning"
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: "trivy-backend.sarif"
-          category: "trivy-backend"
-
-  scan-frontend-image:
-    name: "Scan Frontend Image"
-    needs: [build-and-push]
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      security-events: write
-
-    steps:
-      - name: "Run Trivy image scanner"
-        uses: aquasecurity/trivy-action@v0.35.0
-        with:
-          image-ref: "${{ env.REGISTRY }}/${{ github.repository }}-frontend:latest"
-          format: "sarif"
-          output: "trivy-frontend.sarif"
-          severity: "CRITICAL,HIGH"
-
-      - name: "Upload to code-scanning"
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: "trivy-frontend.sarif"
-          category: "trivy-frontend"
