@@ -44,4 +44,3 @@ jobs:
           name: scorecard-results
           path: results.json
           retention-days: 5
-
