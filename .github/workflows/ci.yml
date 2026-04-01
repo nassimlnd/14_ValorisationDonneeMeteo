@@ -15,10 +15,10 @@ env:
 
 jobs:
   # ──────────────────────────────────────────────
-  # Phase 1 — Lint (parallel)
+  # Phase 1 — Install & Lint (parallel)
   # ──────────────────────────────────────────────
   backend-lint:
-    name: "Backend - Lint"
+    name: "Backend - Install & Lint"
     runs-on: ubuntu-24.04
     steps:
       - name: "Checkout code"
@@ -40,7 +40,7 @@ jobs:
         run: docker compose exec backend uv run ruff format --check --exclude .venv .
 
   frontend-lint:
-    name: "Frontend - Lint"
+    name: "Frontend - Install & Lint"
     runs-on: ubuntu-24.04
     steps:
       - name: "Checkout code"
@@ -85,11 +85,70 @@ jobs:
         run: docker compose exec backend uv run pytest
 
   # ──────────────────────────────────────────────
-  # Phase 3 — Build & Push (only on tags)
+  # Phase 3 — Security scans (needs tests)
+  # ──────────────────────────────────────────────
+  backend-security:
+    name: "Backend - Security"
+    needs: [backend-test]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: "Checkout code"
+        uses: actions/checkout@v4
+
+      - name: "Run Trivy vulnerability scanner"
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          scan-type: "fs"
+          scan-ref: "./backend"
+          format: "sarif"
+          output: "trivy-backend.sarif"
+          severity: "CRITICAL,HIGH"
+
+      - name: "Upload to code-scanning"
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: "trivy-backend.sarif"
+          category: "trivy-ci-backend"
+
+  frontend-security:
+    name: "Frontend - Security"
+    needs: [frontend-lint]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: "Checkout code"
+        uses: actions/checkout@v4
+
+      - name: "Run Trivy vulnerability scanner"
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          scan-type: "fs"
+          scan-ref: "./frontend"
+          format: "sarif"
+          output: "trivy-frontend.sarif"
+          severity: "CRITICAL,HIGH"
+
+      - name: "Upload to code-scanning"
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: "trivy-frontend.sarif"
+          category: "trivy-ci-frontend"
+
+  # ──────────────────────────────────────────────
+  # Phase 4 — Build & Push (needs security, only on tags)
   # ──────────────────────────────────────────────
   build-and-push:
     name: "Build and Push Images"
-    needs: [backend-test, frontend-lint]
+    needs: [backend-security, frontend-security]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-24.04
     permissions:
