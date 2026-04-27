@@ -2,10 +2,10 @@
 set -e
 
 echo "Applying database migrations..."
-uv run python manage.py migrate --noinput
+/app/.venv/bin/python manage.py migrate --noinput
 
 echo "Collecting static files..."
-uv run python manage.py collectstatic --noinput
+/app/.venv/bin/python manage.py collectstatic --noinput
 
 # Prometheus multiprocess mode for Gunicorn
 export PROMETHEUS_MULTIPROC_DIR=/tmp/django_prometheus_multiproc
